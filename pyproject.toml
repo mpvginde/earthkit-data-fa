@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "earthkit-data-fa"
+version = "0.1.0"
+description = "earthkit-data source plugin for FA files (ALADIN/AROME/ALARO)"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "earthkit-data>=1.2",
+    "numpy",
+    "pyproj",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.entry-points."earthkit.data.sources"]
+fa = "earthkit_data_fa:FASource"
+
+[tool.setuptools.packages.find]
+where = ["src"]
