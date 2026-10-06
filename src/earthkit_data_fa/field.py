@@ -140,38 +140,34 @@ class _HybridVertical(ParametricVertical):
 
 
 class FAMetadata:
-    """Raw FA metadata of one field, reached as ``field.get("metadata.<key>")``."""
+    """Raw FA metadata of one field, reached as ``field.get("metadata.<key>")``.
 
-    def __init__(self, record, shared):
+    Per-record keys (``name``, ``spectral``, ``ngrib``, ``nbits``) take precedence; anything
+    else falls through to the file's validity info and then to the ``Frame`` dataclass
+    (``fafile.py``), so every frame attribute (``nsmax``, ``ndlun``, ``lon0``, ``a``, ...) is
+    reached under its own name, with no separate list to keep in sync. ``proj_string`` is the
+    one computed addition, matching ``geography.projection().to_proj_string()``.
+    """
+
+    def __init__(self, record, frame, validity):
         self._record = record
-        self._shared = shared
+        self._frame = frame
+        self._validity = validity
 
     def metadata(self, key, default=None, *, astype=None, raise_on_missing=False):
         if key in ("name", "spectral", "ngrib", "nbits"):
             value = getattr(self._record, key)
-        elif key in self._shared:
-            value = self._shared[key]
+        elif key == "proj_string":
+            value = proj_string(self._frame)
+        elif key in self._validity:
+            value = self._validity[key]
+        elif hasattr(self._frame, key):
+            value = getattr(self._frame, key)
         elif raise_on_missing:
             raise KeyError(key)
         else:
             return default
         return astype(value) if callable(astype) and value is not None else value
-
-
-def _file_metadata(fafile):
-    frame = fafile.frame
-    return {
-        "projection": frame.projection,
-        "proj_string": proj_string(frame),
-        "lon_0": frame.lon0,
-        "lat_0": frame.lat0,
-        "dx": frame.dx,
-        "dy": frame.dy,
-        "nx": frame.nx,
-        "ny": frame.ny,
-        "nlev": frame.nlev,
-        **fafile.validity,
-    }
 
 
 def make_fields(fafile):
@@ -181,7 +177,6 @@ def make_fields(fafile):
     time = None
     if fafile.base_datetime is not None:
         time = TimeFieldComponentHandler.from_dict({"base_datetime": fafile.base_datetime, "step": fafile.step})
-    shared = _file_metadata(fafile)
     coefficients = (frame.a, frame.b)
     verticals = {}
 
@@ -206,6 +201,6 @@ def make_fields(fafile):
             geography=geography,
             vertical=verticals[key],
         )
-        field._set_private_data("metadata", FAMetadata(record, shared))
+        field._set_private_data("metadata", FAMetadata(record, frame, fafile.validity))
         fields.append(field)
     return fields

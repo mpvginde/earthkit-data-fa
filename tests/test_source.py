@@ -116,6 +116,26 @@ def test_field_metadata(analysis):
         field.metadata("no_such_key")
 
 
+def test_frame_metadata_fallthrough(analysis):
+    # every Frame field (fafile.py) is reachable by name, with no separate list to maintain
+    field = analysis.sel({"metadata.name": "S087TEMPERATURE"})[0]
+
+    assert field.metadata("nsmax") == 287
+    assert field.metadata("nmsmax") == 287
+    assert (field.metadata("ndlun"), field.metadata("ndlux")) == (1, 564)
+    assert field.metadata("lon0") == pytest.approx(4.55)
+    assert field.metadata("nlev") == 87
+
+    a, b = field.metadata("a"), field.metadata("b")
+    assert (len(a), len(b)) == (88, 88)
+    assert (a, b) == field.vertical.coefficients()
+
+    # the record itself still takes precedence over any same-named frame attribute
+    assert field.metadata("spectral") is True
+    # validity info is reached the same way
+    assert field.metadata("time_range_indicator") == 0
+
+
 def test_selection(analysis):
     assert len(analysis.sel({"metadata.spectral": True})) == 524
     assert len(analysis.sel({"vertical.level_type": "hybrid"})) == 13 * 87
