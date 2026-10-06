@@ -1,6 +1,0 @@
-earthkit-data>=1.2
-numpy
-pyproj
-
-[test]
-pytest

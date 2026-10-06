@@ -1,2 +1,0 @@
-[earthkit.data.sources]
-fa = earthkit_data_fa:FASource
