@@ -17,7 +17,6 @@ EPYGRAM_POINTS = {
 }
 
 GRID_TYPES = {
-    "analysis": "lambert",
     "clim": "lambert",
     "forecast": "lambert",
     "lambert_HN": "lambert",
@@ -63,27 +62,27 @@ def test_points_match_epygram(name, points):
 
 
 def test_lambert_projection():
-    f = FAFile(sample("analysis"))
+    f = FAFile(sample("forecast"))
     geography = FAGeography(f.frame)
     projection = geography.projection()
 
     assert projection.to_proj_string() == (
-        "+proj=lcc +lat_1=50.8 +lat_2=50.8 +lat_0=50.8 +lon_0=4.55 +units=m +a=6371229.0 +b=6371229.0 +no_defs"
+        "+proj=lcc +lat_1=5 +lat_2=5 +lat_0=5 +lon_0=-51.5 +units=m +a=6371229.0 +b=6371229.0 +no_defs"
     )
     assert type(projection).__name__ == "LambertConformal"
-    assert projection.parameters["standard_parallels"] == (50.8, 50.8)
+    assert projection.parameters["standard_parallels"] == (5.0, 5.0)
     assert projection.globe == {"semimajor_axis": 6371229.0, "semiminor_axis": 6371229.0}
 
     x, y = geography.x(), geography.y()
-    assert x.shape == y.shape == (564, 564)
-    assert np.allclose(np.diff(x[0]), 1300.0) and np.allclose(np.diff(y[:, 0]), 1300.0)
-    # the projection origin is the domain centre here, so the grid is centred on (0, 0)
-    assert x.mean() == pytest.approx(0, abs=1e-6) and y.mean() == pytest.approx(0, abs=1e-6)
+    assert x.shape == y.shape == (29, 39)
+    assert np.allclose(np.diff(x[0]), 2500.0) and np.allclose(np.diff(y[:, 0]), 2500.0)
+    # the domain centre is 298.75 km west and 83.75 km north of the projection origin
+    assert x.mean() == pytest.approx(-298750, abs=1e-3) and y.mean() == pytest.approx(83750, abs=1e-3)
     assert geography.distinct_latitudes() is None
 
     north, west, south, east = geography.area()
-    assert (south, north) == pytest.approx((47.40, 54.09), abs=0.01)
-    assert (west, east) == pytest.approx((-1.04, 10.14), abs=0.01)
+    assert (south, north) == pytest.approx((5.43, 6.06), abs=0.01)
+    assert (west, east) == pytest.approx((-54.63, -53.77), abs=0.01)
     assert geography.bounding_box().north == pytest.approx(north)
 
 
@@ -111,12 +110,12 @@ def test_regular_latlon():
 
 
 def test_grid_id_and_pickle():
-    analysis = FAGeography(FAFile(sample("analysis")).frame)
-    first_guess = FAGeography(FAFile(sample("first_guess")).frame)
-    other = FAGeography(FAFile(sample("clim")).frame)
+    forecast = FAGeography(FAFile(sample("forecast")).frame)
+    same_domain = FAGeography(FAFile(sample("VGeometry_hybridP")).frame)
+    other = FAGeography(FAFile(sample("lambert_HN")).frame)
 
-    assert analysis.unique_grid_id() == first_guess.unique_grid_id()
-    assert analysis.unique_grid_id() != other.unique_grid_id()
+    assert forecast.unique_grid_id() == same_domain.unique_grid_id()
+    assert forecast.unique_grid_id() != other.unique_grid_id()
 
     clone = pickle.loads(pickle.dumps(other))
     assert clone.unique_grid_id() == other.unique_grid_id()
