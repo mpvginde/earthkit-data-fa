@@ -1,5 +1,7 @@
 """Build lazy earthkit Fields from the records of an FA file."""
 
+from functools import lru_cache
+
 import numpy as np
 from earthkit.data.core.field import Field
 from earthkit.data.field.component.vertical import ParametricVertical, Vertical
@@ -110,7 +112,7 @@ class FAData(DataFieldComponentHandler):
 
     def get_values(self, dtype=None, copy=True):
         values = _decode.decode(self._file.read(self._record), self._file.frame)
-        if self._record.spectral and self._record.name == "SURFPRESSION":
+        if self._record.name == "SURFPRESSION" and self._file.header(self._record).spectral:
             # in spectral space the model stores the logarithm of surface pressure
             np.exp(values, out=values)
         return values if dtype is None else values.astype(dtype, copy=False)
@@ -142,23 +144,33 @@ class _HybridVertical(ParametricVertical):
 class FAMetadata:
     """Raw FA metadata of one field, reached as ``field.get("metadata.<key>")``.
 
-    Per-record keys (``name``, ``spectral``, ``ngrib``, ``nbits``) take precedence; anything
-    else falls through to the file's validity info and then to the ``Frame`` dataclass
-    (``fafile.py``), so every frame attribute (``nsmax``, ``ndlun``, ``lon0``, ``a``, ...) is
-    reached under its own name, with no separate list to keep in sync. ``proj_string`` is the
-    one computed addition, matching ``geography.projection().to_proj_string()``.
+    Per-record keys (``name``, ``spectral``, ``ngrib``, ``nbits``) take precedence; the last
+    three are read from the file when first asked. Anything else falls through to the file's
+    validity info and then to the ``Frame`` dataclass (``fafile.py``), so every frame attribute
+    (``nsmax``, ``ndlun``, ``lon0``, ``a``, ...) is reached under its own name, with no separate
+    list to keep in sync. The computed additions are ``proj_string``, matching
+    ``geography.projection().to_proj_string()``, and the two GRIB keys anemoi-datasets reads to
+    describe the resolution of a dataset: ``gridType`` and, on a regular lat-lon grid only,
+    ``iDirectionIncrementInDegrees``.
     """
 
-    def __init__(self, record, frame, validity):
+    def __init__(self, fafile, record):
+        self._file = fafile
         self._record = record
-        self._frame = frame
-        self._validity = validity
+        self._frame = fafile.frame
+        self._validity = fafile.validity
 
     def metadata(self, key, default=None, *, astype=None, raise_on_missing=False):
-        if key in ("name", "spectral", "ngrib", "nbits"):
-            value = getattr(self._record, key)
+        if key == "name":
+            value = self._record.name
+        elif key in ("spectral", "ngrib", "nbits"):
+            value = getattr(self._file.header(self._record), key)
         elif key == "proj_string":
             value = proj_string(self._frame)
+        elif key == "gridType":
+            value = self._frame.projection
+        elif key == "iDirectionIncrementInDegrees" and self._frame.projection == "regular_ll":
+            value = self._frame.dx
         elif key in self._validity:
             value = self._validity[key]
         elif hasattr(self._frame, key):
@@ -168,6 +180,13 @@ class FAMetadata:
         else:
             return default
         return astype(value) if callable(astype) and value is not None else value
+
+
+@lru_cache(maxsize=None)
+def _parameter(variable):
+    # shared by all the fields of that variable, in every file: building one parses its
+    # (absent) units, which takes longer than everything else a Field needs
+    return ParameterFieldComponentHandler.from_dict({"variable": variable})
 
 
 def make_fields(fafile):
@@ -197,10 +216,10 @@ def make_fields(fafile):
         field = Field(
             data=FAData(fafile, record),
             time=time,
-            parameter=ParameterFieldComponentHandler.from_dict({"variable": variable}),
+            parameter=_parameter(variable),
             geography=geography,
             vertical=verticals[key],
         )
-        field._set_private_data("metadata", FAMetadata(record, frame, fafile.validity))
+        field._set_private_data("metadata", FAMetadata(fafile, record))
         fields.append(field)
     return fields

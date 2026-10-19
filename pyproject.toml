@@ -20,5 +20,8 @@ test = ["pytest"]
 [project.entry-points."earthkit.data.sources"]
 fa = "earthkit_data_fa:FASource"
 
+[project.entry-points."anemoi.datasets.create.sources"]
+fa = "earthkit_data_fa.anemoi_source:FASource"
+
 [tool.setuptools.packages.find]
 where = ["src"]

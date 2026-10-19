@@ -63,11 +63,17 @@ class Frame:
 
 @dataclass(frozen=True)
 class Record:
-    """Location and packing description of one field."""
+    """Location of one field in the file."""
 
     name: str
     offset: int  # bytes
     length: int  # bytes
+
+
+@dataclass(frozen=True)
+class Header:
+    """Packing description at the start of a record."""
+
     ngrib: int
     spectral: bool
     nbits: int | None
@@ -80,6 +86,7 @@ class FAFile:
         self.path = os.fspath(path)
         self._fd = None
         self._lock = threading.Lock()
+        self._headers = {}
 
         articles = self._read_index()
         self.frame = self._read_frame(articles)
@@ -110,6 +117,15 @@ class FAFile:
     def read(self, record):
         """Return the raw bytes of one record."""
         return self._pread(record.length, record.offset)
+
+    def header(self, record):
+        """Return the packing description of a record, read from the file on first use."""
+        if record.name not in self._headers:
+            header = self._read_header(record)
+            if header is None:
+                raise ValueError(f"{self.path}: article {record.name!r} does not hold a field")
+            self._headers[record.name] = header
+        return self._headers[record.name]
 
     def _read_index(self):
         """Return {article name: (byte offset, byte length)}, holes excluded."""
@@ -238,39 +254,54 @@ class FAFile:
         return base, None if step is None else datetime.timedelta(seconds=step), validity
 
     def _read_records(self, articles):
-        frame = self.frame
-        gridpoint_sizes = {frame.ndlon * frame.ndgl, frame.nx * frame.ny}
-        spectral_size = 4 * spectral_count(frame.nsmax, frame.nmsmax)
+        # Telling whether an article holds a field takes a read at its position. One such read
+        # per record, scattered over the file, is what opening a large file would cost, so only
+        # an article too short to hold one bit per grid point is checked here. A longer one is
+        # taken to be a field, and header() reads it when first asked.
+        unchecked = self.frame.nx * self.frame.ny // 8
 
         records = []
         for name, (offset, length) in articles.items():
             if name in _FRAME_ARTICLES or length < 16:
                 continue
-            head = self._pread(min(length, 64), offset)
-            words = np.frombuffer(head[: len(head) // 8 * 8], ">i8")
-            ngrib, spectral = int(words[0]), int(words[1])
-            if spectral not in (0, 1) or len(words) < 3:
-                continue
-
-            nbits = sptrunc = sppow = None
-            if ngrib <= 0:
-                n_bytes = length - 16
-                if spectral:
-                    is_field = n_bytes == 8 * spectral_size
-                else:
-                    is_field = any(n_bytes in (8 * n, 8 * math.ceil(n / 2)) for n in gridpoint_sizes)
-            else:
-                nbits = int(words[2])
-                if spectral and len(words) >= 5:
-                    sptrunc, sppow = int(words[3]), int(words[4])
-                if ngrib >= 100:
-                    is_field = b"GRIB" in head[24:32] or b"BIRG" in head[24:32]
-                else:
-                    start = 24 + (16 if spectral else 0) + (16 if ngrib >= 2 else 0)
-                    is_field = head[start : start + 4] == b"GRIB"
-            if is_field:
-                records.append(Record(name, offset, length, ngrib, bool(spectral), nbits, sptrunc, sppow))
+            record = Record(name, offset, length)
+            if length < unchecked:
+                header = self._read_header(record)
+                if header is None:
+                    continue
+                self._headers[name] = header
+            records.append(record)
         return records
+
+    def _read_header(self, record):
+        """Return the Header of a record, or None when the article does not hold a field."""
+        frame = self.frame
+        head = self._pread(min(record.length, 64), record.offset)
+        words = np.frombuffer(head[: len(head) // 8 * 8], ">i8")
+        if len(words) < 3:
+            return None
+        ngrib, spectral = int(words[0]), int(words[1])
+        if spectral not in (0, 1):
+            return None
+
+        nbits = sptrunc = sppow = None
+        if ngrib <= 0:
+            n_bytes = record.length - 16
+            if spectral:
+                is_field = n_bytes == 32 * spectral_count(frame.nsmax, frame.nmsmax)
+            else:
+                gridpoint_sizes = {frame.ndlon * frame.ndgl, frame.nx * frame.ny}
+                is_field = any(n_bytes in (8 * n, 8 * math.ceil(n / 2)) for n in gridpoint_sizes)
+        else:
+            nbits = int(words[2])
+            if spectral and len(words) >= 5:
+                sptrunc, sppow = int(words[3]), int(words[4])
+            if ngrib >= 100:
+                is_field = b"GRIB" in head[24:32] or b"BIRG" in head[24:32]
+            else:
+                start = 24 + (16 if spectral else 0) + (16 if ngrib >= 2 else 0)
+                is_field = head[start : start + 4] == b"GRIB"
+        return Header(ngrib, bool(spectral), nbits, sptrunc, sppow) if is_field else None
 
 
 def spectral_mmax(nsmax, nmsmax):
